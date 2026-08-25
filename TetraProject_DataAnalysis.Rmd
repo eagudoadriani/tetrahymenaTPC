@@ -1,0 +1,1327 @@
+---
+title: "TetraProject_DataAnalysis"
+output: html_document
+date: "2026-08-20"
+---
+
+# Effect of nutrients and predation on T. pyriformis thermal performance
+
+loading libraries
+```{r, message=FALSE}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(emmeans)
+library(rTPC)
+library(nls.multstart)
+library(boot)
+library(car)
+library(broom)
+library(purrr)
+library(patchwork)
+library(forcats)
+library(mgcv)
+library(forcats)
+```
+
+loading data
+```{r, results='hide'}
+data<-read.csv(file="data.csv", header=TRUE)
+str(data)
+data$Nutrients<-factor(data$Nutrients) #assigning factors
+data$Essay<-factor(data$Essay)
+data$Predation<-factor(data$Predation)
+data$Cat<-factor(data$Cat)
+data$density<-data$Cells/3
+```
+
+### Pairwise comparations across treatments  
+Statistical model fitting and comparation of each treatment across temperatures for growth rate
+```{r}
+#Starting with growth rate
+mod_r <- gam(r ~ 
+             Nutrients * Predation + Essay+ 
+             s(Temp, by = interaction(Nutrients, Predation), k = 6),
+           random = list(replicate = ~1),
+           data = data,
+           method = "REML")
+
+summary(mod_r)
+
+mod_r <- gam(r ~ 
+             Nutrients * Predation + #we removed essay as it does not seemed to significantly explain anything
+             s(Temp, by = interaction(Nutrients, Predation), k = 6),
+           random = list(replicate = ~1),
+           data = data,
+           method = "REML")
+
+summary(mod_r)
+
+
+## Pairwise comparisons 
+temps <- sort(unique(data$Temp))
+
+emm <- emmeans(
+ mod_r,
+  ~ Nutrients * Predation | Temp,
+  at = list(Temp = temps)
+)
+
+nutr_effect_r <- pairs(  #effect of nutrients across predation levels
+  emm,
+  by = c("Temp", "Predation"),
+  adjust = "fdr"
+)
+nutr_effect_r 
+
+pred_effect_r <- pairs(  #effect of nutrients across predation levels
+  emm,
+  by = c("Temp", "Nutrients"),
+  adjust = "fdr"
+)
+
+pred_effect_r
+```
+
+```{r}
+#Starting with density
+mod_density <- gam(density ~ 
+             Nutrients * Predation + Essay+
+             s(Temp, by = interaction(Nutrients, Predation), k = 6),
+           random = list(replicate = ~1),
+           data = data,
+           method = "REML")
+
+summary(mod_density)
+
+mod_density <- gam(density ~ 
+             Nutrients * Predation+ # we removed essay as it does not seems to explain much 
+             s(Temp, by = interaction(Nutrients, Predation), k = 6),
+           random = list(replicate = ~1),
+           data = data,
+           method = "REML")
+
+summary(mod_density)
+
+## Pairwise comparisons 
+temps <- sort(unique(data$Temp))
+
+emm_density <- emmeans(
+  mod_density,
+  ~ Nutrients * Predation | Temp,
+  at = list(Temp = temps)
+)
+
+nutr_effect_density <- pairs(  #effect of nutrients across predation levels
+  emm_density,
+  by = c("Temp", "Predation"),
+  adjust = "fdr"
+)
+
+nutr_effect_density
+
+pred_effect_density <- pairs(  #effect of nutrients across predation levels
+  emm_density,
+  by = c("Temp", "Nutrients"),
+  adjust = "fdr"
+)
+
+pred_effect_density
+```
+
+Building a table
+```{r}
+nutr_table_density <- as.data.frame(nutr_effect_density) %>% # turning into data frame
+  select(Temp, Predation, contrast, estimate, SE, t.ratio, p.value)
+
+pred_table_density <- as.data.frame(pred_effect_density) %>% # turning into data frame
+  select(Temp, Nutrients, contrast, estimate, SE, t.ratio, p.value)
+
+nutr_table_density <- as.data.frame(nutr_table_density) %>%
+  mutate(
+    Effect = "Nutrients",
+    Condition = paste("Predation =", Predation)
+  ) %>%
+  select(Effect, Temp, Condition, contrast, estimate, SE, t.ratio, p.value)
+
+pred_table <- as.data.frame(pred_table_density) %>%
+  mutate(
+    Effect = "Predation",
+    Condition = paste("Nutrients =", Nutrients)
+  ) %>%
+  select(Effect, Temp, Condition, contrast, estimate, SE, t.ratio, p.value)
+
+final_table_density <- bind_rows(nutr_table_density, pred_table_density)
+
+final_table_density <- final_table_density %>% # renaming some variables 
+  select(-c(Effect))%>%
+  rename(
+    Temperature = Temp,
+    Contrast = contrast,
+    Estimate = estimate,
+    SE = SE,
+    t_value = t.ratio,
+    p_value = p.value)%>%
+  mutate(
+    significance = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE ~ "ns")
+  )
+
+
+final_table_density<- final_table_density %>%
+  mutate(
+    significance = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+
+final_table_density
+
+write.csv(final_table_density, "pairwise_comparisons_density.csv", row.names = FALSE)
+```
+
+Same for growth rate
+```{r}
+nutr_table_r <- as.data.frame(nutr_effect_r) %>% # turning into data frame
+  select(Temp, Predation, contrast, estimate, SE, t.ratio, p.value)
+
+pred_table_r <- as.data.frame(pred_effect_r) %>% # turning into data frame
+  select(Temp, Nutrients, contrast, estimate, SE, t.ratio, p.value)
+
+nutr_table_r <- as.data.frame(nutr_table_r) %>%
+  mutate(
+    Effect = "Nutrients",
+    Condition = paste("Predation =", Predation)
+  ) %>%
+  select(Effect, Temp, Condition, contrast, estimate, SE, t.ratio, p.value)
+
+pred_table <- as.data.frame(pred_table_r) %>%
+  mutate(
+    Effect = "Predation",
+    Condition = paste("Nutrients =", Nutrients)
+  ) %>%
+  select(Effect, Temp, Condition, contrast, estimate, SE, t.ratio, p.value)
+
+final_table_r <- bind_rows(nutr_table_r, pred_table_r)
+
+final_table_r <- final_table_r %>% # renaming some variables 
+  select(-c(Effect))%>%
+  rename(
+    Temperature = Temp,
+    Contrast = contrast,
+    Estimate = estimate,
+    SE = SE,
+    t_value = t.ratio,
+    p_value = p.value)%>%
+  mutate(
+    significance = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE ~ "ns")
+  )
+
+
+final_table_r<- final_table_r %>%
+  mutate(
+    significance = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE ~ "ns")
+  )
+
+final_table_r
+
+write.csv(final_table_r, "pairwise_comparisons_r.csv", row.names = FALSE)
+```
+## TPC considering all treatments
+We build two reference curves to include in the plots of growth rate and density
+```{r}
+data$T<-data$Temp+273
+
+d<-data
+
+start_vals <- get_start_vals(d$T, d$r, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield high model
+fit_schoolfield_resp<-nls_multstart(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+new_pred_r <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+new_pred_r$pred <- predict(fit_schoolfield_resp, newdata = new_pred_r)
+
+# Predation prediction with bootstraping interval confidences
+gen_plot_r<-ggplot() +
+  geom_line(aes(T-273, pred), new_pred_r, col = 'blue') +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with low nutrients and no predation')+
+  ylim(0, 9)
+
+gen_plot_r
+
+## Curve for density
+data$T<-data$Temp+273
+
+start_vals <- get_start_vals(d$T, d$density, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield high model
+fit_schoolfield_resp<-nls_multstart(density~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$density, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$density, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+new_pred_density <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+new_pred_density$pred <- predict(fit_schoolfield_resp, newdata = new_pred_density)
+
+
+# Predation prediction with bootstraping interval confidences
+gen_plot_density<-ggplot() +
+  geom_line(aes(T-273, pred), new_pred_density , col = 'blue') +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with low nutrients and no predation')
+#+
+ # ylim(0, 9)
+
+gen_plot_density
+```
+## Population growth rates (r) across nutrient and predation treatments and temperatures with TPC
+```{r}
+sum_pred_r<-data %>%
+  group_by(Temp, Nutrients, Predation) %>%
+  summarise(mean=mean(r), sd=sd(r), #summarizing abundance 
+            n=n()) %>% #summarizing richness
+  mutate(se=sd/sqrt(n))
+
+sum_pred_r
+
+pd <- position_dodge(width = 0.85)
+
+plot_r<-ggplot() + #calling ggplot
+  geom_point(data=sum_pred_r, aes(x=Temp, y=mean, color=Nutrients, shape=Predation, group = interaction(Nutrients, Predation)), 
+             size = 2.5, position = pd)+
+  geom_errorbar(data=sum_pred_r, aes(x=Temp, ymin=mean-se, ymax=mean+se, group = interaction(Nutrients, Predation), color=Nutrients),  
+               size = 0.6, width = 0.2, alpha = 0.6, position = pd)+
+ # geom_point(data=data, aes(x=Temp, y=r, color=Nutrients, shape=Predation, group = interaction(Nutrients, Predation)),
+          #     size = 1, position = pd, alpha=0.2)+
+   geom_line(aes(T-273, pred), new_pred_r, col = 'red', alpha=0.1, size=2)+ #adding curve density
+    #geom_point(data=data, aes(x=Temp, y=Cells, color=Nutrients, shape=Predation),
+     #          size = 2, position = position_dodge(width = 0.85), alpha=0.4)+ #plotting 
+  #ploting SE
+  theme_classic()+ # a more classic look
+     theme(#panel.border = element_rect(colour = "black"),
+       #legend.position ="none",
+       legend.position =c(0.18, 0.7),
+        #axis.text.x = element_text(size = 10), 
+        axis.text.x = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+         axis.title.y = element_text(size = 12, hjust = 0.6, vjust = 2.5), 
+         axis.text.y = element_text(size = 11), 
+       #  legend.position ="none",
+         strip.text = element_text(color = "black", face="bold", size = 15, hjust =0.2),
+        # axis.line.x.top = element_blank(),
+    #axis.line.y.right = element_blank(),
+    strip.background = element_rect(fill = "white", color = "white"))+
+  ylab("Population growth rate (r)")+
+ xlab("Temperature (°C)")+
+  scale_x_continuous(breaks = seq(14, 32, by = 2))+
+  scale_colour_manual(values = c("High Nutrients"="#D55E00", "Low Nutrients"="#0072B2")) 
+
+plot_r
+```
+## Cell density across nutrient and predation treatments and temperatures with TPC curves
+```{r}
+data$density<-data$Cells/3 # estimating density
+
+sum_pred_density<-data %>% # calculating mean and standard error for plotting
+  group_by(Temp, Nutrients, Predation) %>%
+  summarise(mean=mean(density), sd=sd(density), #summarizing abundance 
+            n=n()) %>% #summarizing richness
+  mutate(se=sd/sqrt(n))
+
+sum_pred_density #checking the summary 
+
+pd <- position_dodge(width = 0.95)
+
+plot_density<-ggplot() + #calling ggplot
+  geom_point(data=sum_pred_density, aes(x=Temp, y=mean, color=Nutrients, shape=Predation, group = interaction(Nutrients, Predation)), 
+             size = 2.5, position = pd)+
+  geom_errorbar(data=sum_pred_density, aes(x=Temp, ymin=mean-se, ymax=mean+se, group = interaction(Nutrients, Predation), color=Nutrients),  
+               size = 0.6, width = 0.2, alpha = 0.6, position = pd)+
+  #  geom_point(data=data, aes(x=Temp, y=density, color=Nutrients, shape=Predation, group = interaction(Nutrients, Predation)),
+          #     size = 1, position = pd, alpha=0.2)+ #plotting 
+   geom_line(aes(T-273, pred), new_pred_density , col = 'red', alpha=0.1, size=2)+ #adding curve
+  #ploting SE
+  theme_classic()+ # a more classic look
+     theme(#panel.border = element_rect(colour = "black"),
+       axis.text.x = element_text(size = 10),
+       axis.title.y = element_text(size = 12, hjust = 0.6, vjust = 2.5), 
+       axis.text.y = element_text(size = 11), 
+       legend.position = "none",
+       #legend.position =c(0.10, 0.55),
+        strip.text = element_text(color = "black", face="bold", size = 15, hjust =0.2),
+        # axis.line.x.top = element_blank(),
+    #axis.line.y.right = element_blank(),
+    strip.background = element_rect(fill = "white", color = "white"))+
+  ylab("Cell density (cells/ml)")+
+  xlab("Temperature (°C)")+
+    scale_x_continuous(breaks = seq(12, 34, by = 2))+
+   scale_colour_manual(values = c("High Nutrients"="#D55E00", "Low Nutrients"="#0072B2"))
+
+plot_density
+```
+
+### Figure 2 Effect treatments across temperatures 
+```{r}
+plot_r/plot_density
+ggsave("figure/Density_r_TempTetra_.png", height = 25, width = 20, units = 'cm', dpi= 300, type = "cairo")
+```
+
+
+## Thermal performance curves across treatments
+```{r}
+# High Nutrients and No predation
+data$T<-data$Temp+273
+
+d<-data%>%
+  filter(Nutrients=="High Nutrients" & Predation=="No predation ")
+
+start_vals <- get_start_vals(d$T, d$r, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield high model
+fit_schoolfield_resp<-nls_multstart(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+newT <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+newTHn<-newT
+
+#summary of model and calculation parameters 
+summary(fit_schoolfield_resp)
+
+
+params<-rTPC::calc_params(fit_schoolfield_resp)
+toptHn<-params$topt
+params
+
+HnNpParams<-params
+
+fit_schoolfield_resp_nlsLM<-minpack.lm::nlsLM(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293), 
+          data=d,
+          start = coef(fit_schoolfield_resp), #I just add the coeficient from my previously calculated model 
+                        lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        weights = rep(1, times = nrow(d)))
+
+summary(fit_schoolfield_resp_nlsLM)
+
+# bootstrap using case resampling
+boot1 <- Boot(fit_schoolfield_resp_nlsLM, method = 'case')
+
+#hist(boot1, layout = c(2,2))
+
+boot1_preds <- boot1$t %>%
+  as.data.frame() %>%
+  drop_na() %>%
+  mutate(iter = 1:n()) %>%
+  group_by_all() %>%
+  do(data.frame(T = seq(min(d$T-5), max(d$T+5), length.out = 100))) %>%
+  ungroup() %>%
+  mutate(pred = sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293))
+
+# calculate bootstrapped confidence intervals
+boot1_conf_predsHn <- group_by(boot1_preds, T) %>%
+  summarise(conf_lower = quantile(pred, 0.025),
+            conf_upper = quantile(pred, 0.975)) %>%
+  ungroup()
+
+CI_Hn<-boot1_conf_predsHn
+
+# Predation prediction with bootstraping interval confidences
+ggplot() +
+  geom_line(aes(T-273, pred), newTHn, col = 'blue') +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), boot1_conf_predsHn, fill = 'blue', alpha = 0.3) +
+  geom_point(aes(T-273, r), d, size = 1, alpha = 0.5, position="jitter") +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with low nutrients and no predation')+
+  ylim(0, 9)
+
+# Same for low nutrients and predation 
+d<-data%>%
+  filter(Nutrients=="Low Nutrients" & Predation=="No predation ")
+
+start_vals <- get_start_vals(d$T, d$r, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield full model
+fit_schoolfield_resp<-nls_multstart(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+newT <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+newTLn<-newT
+
+#summary of model and calculation parameters 
+summary(fit_schoolfield_resp)
+
+params<-rTPC::calc_params(fit_schoolfield_resp)
+toptLn<-params$topt
+params
+
+LnNpParams<-params
+
+fit_schoolfield_resp_nlsLM<-minpack.lm::nlsLM(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293), 
+          data=d,
+          start = coef(fit_schoolfield_resp), #I just add the coeficient from my previously calculated model 
+                        lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        weights = rep(1, times = nrow(d)))
+
+summary(fit_schoolfield_resp_nlsLM)
+
+# Bootstraping for confidence interval
+boot1 <- Boot(fit_schoolfield_resp_nlsLM, method = 'case')
+
+#hist(boot1, layout = c(2,2))
+
+boot1_preds <- boot1$t %>%
+  as.data.frame() %>%
+  drop_na() %>%
+  mutate(iter = 1:n()) %>%
+  group_by_all() %>%
+  do(data.frame(T = seq(min(d$T-5), max(d$T+5), length.out = 100))) %>%
+  ungroup() %>%
+  mutate(pred =sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293))
+
+
+# calculate bootstrapped confidence intervals
+boot1_conf_predsLn <- group_by(boot1_preds, T) %>%
+  summarise(conf_lower = quantile(pred, 0.025),
+            conf_upper = quantile(pred, 0.975)) %>%
+  ungroup()
+
+CI_Ln<-boot1_conf_predsLn
+
+# Predation prediction with bootstraping interval confidences
+ggplot() +
+  geom_line(aes(T-273, pred), newTLn, col = 'blue') +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), boot1_conf_predsLn, fill = 'blue', alpha = 0.3) +
+  geom_point(aes(T-273, r), d, size = 1, alpha = 0.5, position="jitter") +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with low nutrients and no predation')+
+  ylim(0, 9)
+
+
+# For high nutrients and predation 
+d<-data%>%
+  filter(Nutrients=="High Nutrients" & Predation=="Predation present ")
+
+
+start_vals <- get_start_vals(d$T, d$r, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield full model
+fit_schoolfield_resp<-nls_multstart(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+newT <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+newTHnPp<-newT
+
+#summary of model and calculation parameters 
+summary(fit_schoolfield_resp)
+
+params<-rTPC::calc_params(fit_schoolfield_resp)
+toptHnPp<-params$topt
+params
+
+HnYpParams<-params
+
+fit_schoolfield_resp_nlsLM<-minpack.lm::nlsLM(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293), 
+          data=d,
+          start = coef(fit_schoolfield_resp), #I just add the coeficient from my previously calculated model 
+                        lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        weights = rep(1, times = nrow(d)))
+
+summary(fit_schoolfield_resp_nlsLM)
+
+# bootstrap using case resampling
+boot1 <- Boot(fit_schoolfield_resp_nlsLM, method = 'case')
+
+#hist(boot1, layout = c(2,2))
+
+boot1_preds <- boot1$t %>%
+  as.data.frame() %>%
+  drop_na() %>%
+  mutate(iter = 1:n()) %>%
+  group_by_all() %>%
+  do(data.frame(T = seq(min(d$T-5), max(d$T+5), length.out = 100))) %>%
+  ungroup() %>%
+  mutate(pred = sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293))
+
+# calculate bootstrapped confidence intervals
+boot1_conf_predsHnPp <- group_by(boot1_preds, T) %>%
+  summarise(conf_lower = quantile(pred, 0.025),
+            conf_upper = quantile(pred, 0.975)) %>%
+  ungroup()
+
+CI_HnPp<-boot1_conf_predsHnPp
+
+# Predation prediction with bootstraping interval confidences
+ggplot() +
+  geom_line(aes(T-273, pred), newTHnPp, col = 'blue') +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), boot1_conf_predsHnPp, fill = 'blue', alpha = 0.3) +
+  geom_point(aes(T-273, r), d, size = 1, alpha = 0.5, position="jitter") +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with high nutrients and predation')+
+  ylim(0, 9)
+
+# same for low nutrients and predation 
+d<-data%>%
+  filter(Nutrients=="Low Nutrients" & Predation=="Predation present ")
+
+start_vals <- get_start_vals(d$T, d$r, model_name = 'sharpeschoolhigh_1981')
+
+# Sharpe Schoolfield full model
+fit_schoolfield_resp<-nls_multstart(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3,3,3,3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE) 
+
+# Creating predictions
+newT <- data.frame(T = seq(min(d$T-5), max(d$T+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+newTLnPp<-newT
+
+#summary of model and calculation parameters 
+summary(fit_schoolfield_resp)
+
+params<-rTPC::calc_params(fit_schoolfield_resp)
+toptLnPp<-params$topt
+params
+
+LnYPparams<-params
+
+fit_schoolfield_resp_nlsLM<-minpack.lm::nlsLM(r~sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293), 
+          data=d,
+          start = coef(fit_schoolfield_resp), #I just add the coeficient from my previously calculated model 
+                        lower = get_lower_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        upper = get_upper_lims(d$T, d$r, model_name = 'sharpeschoolhigh_1981'),
+                        weights = rep(1, times = nrow(d)))
+
+summary(fit_schoolfield_resp_nlsLM)
+
+# bootstrap using case resampling
+boot1 <- Boot(fit_schoolfield_resp_nlsLM, method = 'case')
+
+#hist(boot1, layout = c(2,2))
+
+boot1_preds <- boot1$t %>%
+  as.data.frame() %>%
+  drop_na() %>%
+  mutate(iter = 1:n()) %>%
+  group_by_all() %>%
+  do(data.frame(T = seq(min(d$T-5), max(d$T+5), length.out = 100))) %>%
+  ungroup() %>%
+  mutate(pred = sharpeschoolhigh_1981(temp = T, r_tref, e, eh, th, tref = 293))
+
+# calculate bootstrapped confidence intervals
+boot1_conf_predsLnPp <- group_by(boot1_preds, T) %>%
+  summarise(conf_lower = quantile(pred, 0.025),
+            conf_upper = quantile(pred, 0.975)) %>%
+  ungroup()
+
+CI_LnPp<-boot1_conf_predsLnPp
+
+# Predation prediction with bootstraping interval confidences
+ggplot() +
+  geom_line(aes(T-273, pred), newTLnPp, col = 'blue') +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), boot1_conf_predsLn, fill = 'blue', alpha = 0.3) +
+  geom_point(aes(T-273, r), d, size = 1, alpha = 0.5, position="jitter") +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Respiration rates',
+       title = 'Growth rate with low nutrients and predation present')+
+  ylim(0, 9)
+
+```
+### Figure 1: TPCs across treatments 
+```{r}
+d<-data
+
+tpc2<-ggplot() +
+  geom_line(aes(T-273, pred), newTHn, col = '#00A087FF', size=0.7) +
+  geom_line(aes(T-273, pred), newTLn, col = '#F39B7FB2', size=0.7) +
+  geom_line(aes(T-273, pred), newTHnPp, col = 'darkgreen', size=0.7) +
+  geom_line(aes(T-273, pred), newTLnPp, col = 'lightsalmon4', size=0.7) +
+  geom_point(aes(Temp, r, color=Cat), d, size = 1.5, alpha = 0.5)+ 
+  #position="jitter"        
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), CI_Hn, fill = '#00A087FF', alpha = 0.2) +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper),CI_Ln, fill = '#F39B7FB2', alpha = 0.2) +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper), CI_HnPp, fill = 'darkgreen', alpha = 0.2) +
+  geom_ribbon(aes(T-273, ymin = conf_lower, ymax = conf_upper),CI_LnPp, fill = 'lightsalmon4', alpha = 0.2) +
+  theme_bw(base_size = 12) +
+  labs(x = 'Temperature (ºC)',
+       y = 'Growth rate (r)')+
+  scale_y_continuous(limits=c(-0.06, 8))+
+scale_x_continuous(limits=c(9, 38), breaks=seq(10, 38, 2))+
+  theme(legend.position = c(0.19, 0.75),
+         legend.key.spacing.y = unit(0.3, "cm"),
+         legend.text = element_text(size = 10.5),
+         panel.grid.major = element_blank(), 
+         panel.grid.minor = element_blank(), 
+         panel.background = element_rect(colour="white"), 
+         panel.border = element_blank(),
+         axis.line = element_line(colour = "black"),
+         #axis.line.x.top = element_line(colour="black"),
+         #axis.line.y.right = element_line(colour="black"),
+         #axis.line.y.left = element_line(colour="black"),
+         strip.background=element_rect(colour="white", fill="white"),
+         strip.text = element_text(face = "italic", 
+                                   color = "black", size = 13, hjust =0.05))+
+          scale_colour_manual(name = "", 
+ values =c('High NutrientsNo'="#00A087FF", 'High NutrientsYes'="darkgreen", 'Low NutrientsNo'="#F39B7FB2", 'Low NutrientsYes'="lightsalmon4"), 
+ labels= c('High NutrientsNo'="High Nutrients/No predation", 'Low NutrientsNo'="Low Nutrients/No predation", 'High NutrientsYes'="High Nutrients/Predation present", 'Low NutrientsYes'="Low Nutrients/Predation present"))
+# +
+#   geom_vline(xintercept=toptHn-273, linetype="dashed", size=0.5, color="#00A087FF")+
+#   geom_vline(xintercept=toptLn-273, linetype="dashed", size=0.5, color="#F39B7FB2")+
+#   geom_vline(xintercept=toptHnPp-273, linetype="dashed", size=0.5, color="darkgreen")+
+#   geom_vline(xintercept=toptLnPp-273, linetype="dashed", size=0.5, color="lightsalmon4")
+
+tpc2
+
+ggsave("figure/TPC_Schoolfield_final.png", height = 13, width = 20, units = 'cm', dpi= 300, type = "cairo")
+```
+
+### Estimation of thermal parameters
+```{r}
+d<-data
+
+# fitting a  model
+start_vals <- get_start_vals(d$T, d$r, "sharpeschoolhigh_1981")
+lower      <- get_lower_lims(d$T, d$r, "sharpeschoolhigh_1981")
+upper      <- get_upper_lims(d$T, d$r, "sharpeschoolhigh_1981")
+
+#Function for fitting SchoolfieldHigh model
+fit_schoolfied_replica <- function(d) {
+  
+  if (nrow(d) < 6) return(NULL)
+  
+  tryCatch(
+    nls_multstart(
+      r ~ sharpeschoolhigh_1981(
+       temp = T, 
+       r_tref, 
+       e, 
+       eh, 
+       th, 
+       tref = 293),
+      data = d,
+    iter = c(5, 5, 5, 5),
+    start_lower = get_start_vals(d$T, d$r, "sharpeschoolhigh_1981") - 2,
+    start_upper = get_start_vals(d$T, d$r, "sharpeschoolhigh_1981") + 2,
+    lower = get_lower_lims(d$T, d$r, "sharpeschoolhigh_1981"),
+    upper = get_upper_lims(d$T, d$r, "sharpeschoolhigh_1981"),
+    supp_errors = "Y",
+    convergence_count = FALSE
+    ),
+    error = function(e) NULL
+  )
+}
+
+#Fitting model into our data
+fits_rep <- d %>%
+  group_by(Cat, Rep) %>%
+  group_modify(~{
+    tibble(
+      schoolfield = list(fit_schoolfied_replica(.x))
+    )
+  }) %>%
+  ungroup()
+
+#Creating a function for extracting all paramters
+extract_all_params <- function(mod) {
+
+  if (is.null(mod)) return(NULL)
+
+  # safe wrappers
+  safe_topt <- purrr::possibly(get_topt, otherwise = NA_real_)
+  safe_rmax <- purrr::possibly(get_rmax, otherwise = NA_real_)
+  safe_q10  <- purrr::possibly(function(mod) {
+    # Q10 manual
+    safe_q10_manual <- function(mod, t1 = 283, t2 = 293) {
+      r1 <- try(predict(mod, newdata = data.frame(T = t1)), silent = TRUE)
+      r2 <- try(predict(mod, newdata = data.frame(T = t2)), silent = TRUE)
+      if (inherits(r1, "try-error") || inherits(r2, "try-error")) return(NA_real_)
+      if (is.na(r1) || is.na(r2) || r1 <= 0 || r2 <= 0) return(NA_real_)
+      (r2 / r1)^(10 / (t2 - t1))
+    }
+    
+    safe_q10_manual(mod)
+  }, otherwise = NA_real_)
+  
+  # Coefficients
+  coefs <- coef(mod)
+
+  # Derived parameters
+  Pmax <- safe_rmax(mod)
+  Topt <- safe_topt(mod)
+  Q10  <- safe_q10(mod)
+
+  # CTmin and CTmax at 5% of Pmax
+  safe_ct <- purrr::possibly(function(mod, frac = 0.2) {
+    temps <- seq(min(mod$model$T) - 10, max(mod$model$T) + 10, length.out = 2000)
+    preds <- predict(mod, newdata = data.frame(T = temps))
+    # remove negative predictions
+    preds[preds < 0] <- 0
+    # find first temp >= frac*Pmax (CTmin)
+    CTmin <- temps[min(which(preds >= frac*Pmax))]
+    # find last temp >= frac*Pmax (CTmax)
+    CTmax <- temps[max(which(preds >= frac*Pmax))]
+    tibble(CTmin = CTmin, CTmax = CTmax)
+  },
+  otherwise = tibble(CTmin = NA_real_, CTmax = NA_real_))
+
+  CTs <- safe_ct(mod)
+  
+# Thermal breadth at 80% of Pmax
+  
+safe_breadth80 <- purrr::possibly(function(mod, level = 0.8) {
+  
+  temps <- seq(min(mod$model$T) - 10,
+               max(mod$model$T) + 10,
+               length.out = 2000)
+  
+  preds <- predict(mod, newdata = data.frame(T = temps))
+
+# clean predictions
+  preds[!is.finite(preds)] <- NA
+  preds[preds < 0] <- 0
+  
+  Pmax_pred <- max(preds, na.rm = TRUE)
+  
+  if (!is.finite(Pmax_pred) || Pmax_pred <= 0) {
+    return(NA_real_)
+  }
+  
+  idx <- which(preds >= level * Pmax_pred)
+  
+  if (length(idx) <= 1) {
+    return(NA_real_)
+  }
+  
+  temps[max(idx)] - temps[min(idx)]
+  
+}, otherwise = NA_real_)
+
+Breadth80 <- safe_breadth80(mod)
+
+  tibble(
+    r_tref = coefs[["r_tref"]],
+    E      = coefs[["e"]],
+    Eh     = coefs[["eh"]],
+    Th     = coefs[["th"]],
+    Topt   = Topt,
+    Pmax   = Pmax,
+    Q10    = Q10,
+    CTmin  = CTs$CTmin,
+    CTmax  = CTs$CTmax,
+    Breadth80 = Breadth80
+  )
+}
+
+
+# Fitting our data to the function to get parameters
+params_individual <- fits_rep %>%
+   mutate(params = purrr::map(schoolfield, extract_all_params)) %>%
+   tidyr::unnest(params)
+
+
+## Sumarizing parameters mean and se for plots
+ se <- function(x) {
+   sd(x, na.rm = TRUE) / sqrt(sum(!is.na(x)))
+ }
+
+params_summary <- params_individual %>%
+  group_by(Cat) %>%   # or any grouping variable
+  summarise(
+    r_tref_mean = mean(r_tref, na.rm = TRUE),
+    r_tref_se   = se(r_tref),
+
+    E_mean      = mean(E, na.rm = TRUE),
+    E_se        = se(E),
+
+    Eh_mean     = mean(Eh, na.rm = TRUE),
+    Eh_se       = se(Eh),
+
+    Th_mean     = mean(Th, na.rm = TRUE),
+    Th_se       = se(Th),
+
+    Topt_mean   = mean(Topt, na.rm = TRUE),
+    Topt_se     = se(Topt),
+
+    Pmax_mean   = mean(Pmax, na.rm = TRUE),
+    Pmax_se     = se(Pmax),
+
+    Q10_mean    = mean(Q10, na.rm = TRUE),
+    Q10_se      = se(Q10),
+
+  n=n(),
+
+  ) %>%
+  ungroup()
+
+params_summary<-params_summary%>%
+  mutate(Topt_mean=Topt_mean-273)
+
+params_summary
+```
+### Plotting rmax and topt 
+```{r}
+params_long <- params_summary %>%
+  pivot_longer(
+    cols = -c(Cat, n),        # keep Species and n
+    names_to = "name",
+    values_to = "value"
+  ) %>%
+  # separate mean and se
+  mutate(
+    stat = ifelse(grepl("_mean$", name), "mean",
+                  ifelse(grepl("_se$", name), "se", NA)),
+    parameter = sub("(_mean|_se)$", "", name)
+  ) %>%
+  select(Cat, n, parameter, stat, value) %>%
+  pivot_wider(
+    names_from = stat,
+    values_from = value
+  )
+
+## Plotting Pmax
+params_summary_plot<-params_long %>%
+   filter(parameter %in% c("Pmax"))
+
+
+params_individual_filt<-params_individual %>%
+  select(Cat, Pmax)%>%
+   #mutate(Topt=Topt-273)%>%
+  pivot_longer(
+    cols = -c(Cat),        # keep Species and n
+    names_to = "name",
+    values_to = "value")
+
+new_names <- c("Pmax" = "Maximum growth rate (r)")
+
+param_plot_pmax<-
+  ggplot()+
+  geom_point(data =params_individual_filt, aes(x = Cat, y = value, color=Cat), position = position_dodge(width = 0.85))+ 
+       #    shape = 1, alpha = 0.4,  
+      #    position = position_jitterdodge(jitter.width = NULL, jitter.height =0.01, dodge.width = 0.85)) +
+ # this plots SE behind the mean, can use also CI with summarize
+  geom_point(data = params_summary_plot, aes(x=Cat, y = mean, colour = Cat), 
+              shape = "-", size = 20, position = position_dodge(width = 0.85)) +
+    geom_errorbar(data = params_summary_plot, aes(x=Cat, ymin = mean-se, ymax = mean+se, colour = Cat), 
+                size = 8, width = 0, alpha = 0.3, position = position_dodge(width = 0.85), 
+                show.legend = FALSE) +
+  # plots the mean value 
+  theme_bw()+
+   theme(axis.text.x = element_blank(),
+#        axis.title.y = element_text(size = 10.5, hjust = 0.6, vjust = 2.5),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position="none",
+        #legend.position = c(0.08, 0.85),
+         legend.key.spacing.y = unit(-0.9, "cm"),
+       # legend.key.height = unit(0.1, "cm"),
+       # legend.spacing.y = unit(1, 'cm'),
+          legend.key.size = unit(-1, "cm"),
+        legend.margin = margin(0, 0, 0, 0),
+         legend.text = element_text(margin = margin(l = -15, unit = "pt"), size = 8),
+        legend.title = element_blank())+
+#  #  guides(fill = guide_legend(byrow = TRUE))+
+     #legend.text = element_text(margin = margin(l = -5, unit = "pt"))+
+#    scale_colour_manual(name = "", values = c(M.peninsularisB="#F39B7FB2", H.princeps="#00A087FF"), labels = c(expression(italic("M.peninsularis")), expression(italic("H.princeps")))) +
+#   #ylab(expression(italic("E/Eh")))+
+   xlab("")+
+  # ylab()
+   facet_wrap(~parameter, scales = "free_y", labeller = as_labeller(new_names))+
+scale_colour_manual(name = "", 
+ values =c('High NutrientsNo'="#00A087FF", 'High NutrientsYes'="darkgreen", 'Low NutrientsNo'="#F39B7FB2", 'Low NutrientsYes'="lightsalmon4"), 
+ labels= c('High NutrientsNo'="High Nutrients/No predation", 'Low NutrientsNo'="Low Nutrients/No predation", 'High NutrientsYes'="High Nutrients/Predation", 'Low NutrientsYes'="Low Nutrients/Predation"))
+
+param_plot_pmax
+
+
+## for topt
+params_summary_plot<-params_long %>%
+   filter(parameter %in% c("Topt"))
+
+
+params_individual_filt<-params_individual %>%
+  select(Cat, Topt)%>%
+   mutate(Topt=Topt-273)%>%
+  pivot_longer(
+    cols = -c(Cat),        # keep Species and n
+    names_to = "name",
+    values_to = "value")
+
+# %>%
+#    pivot_wider(
+#     names_from = stat,
+#     values_from = value
+#   )
+ 
+#Changing name to title
+new_names <- c("Topt" = "Thermal optimum (°C)")
+
+param_plot_topt<-
+  ggplot()+
+  geom_point(data =params_individual_filt, aes(x = Cat, y = value, color=Cat), position = position_dodge(width = 0.85))+ 
+       #    shape = 1, alpha = 0.4,  
+      #    position = position_jitterdodge(jitter.width = NULL, jitter.height =0.01, dodge.width = 0.85)) +
+ # this plots SE behind the mean, can use also CI with summarize
+  geom_point(data = params_summary_plot, aes(x =Cat, y = mean, colour = Cat), 
+              shape = "-", size = 20, position = position_dodge(width = 0.85)) +
+    geom_errorbar(data = params_summary_plot, aes(x = Cat, ymin = mean-se, ymax = mean+se, colour = Cat), 
+                size = 8, width = 0, alpha = 0.3, position = position_dodge(width = 0.85), 
+                show.legend = FALSE) +
+  # plots the mean value 
+  theme_bw()+
+   theme(axis.text.x = element_blank(),
+#        axis.title.y = element_text(size = 10.5, hjust = 0.6, vjust = 2.5),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position="none",
+        #legend.position = c(0.08, 0.85),
+         legend.key.spacing.y = unit(-0.9, "cm"),
+       # legend.key.height = unit(0.1, "cm"),
+       # legend.spacing.y = unit(1, 'cm'),
+          legend.key.size = unit(-1, "cm"),
+        legend.margin = margin(0, 0, 0, 0),
+         legend.text = element_text(margin = margin(l = -15, unit = "pt"), size = 8),
+        legend.title = element_blank())+
+#  #  guides(fill = guide_legend(byrow = TRUE))+
+     #legend.text = element_text(margin = margin(l = -5, unit = "pt"))+
+#    scale_colour_manual(name = "", values = c(M.peninsularisB="#F39B7FB2", H.princeps="#00A087FF"), labels = c(expression(italic("M.peninsularis")), expression(italic("H.princeps")))) +
+#   #ylab(expression(italic("E/Eh")))+
+   xlab("")+
+   facet_wrap(~parameter, scales = "free_y", labeller = as_labeller(new_names))+
+scale_colour_manual(name = "", 
+ values =c('High NutrientsNo'="#00A087FF", 'High NutrientsYes'="darkgreen", 'Low NutrientsNo'="#F39B7FB2", 'Low NutrientsYes'="lightsalmon4"), 
+ labels= c('High NutrientsNo'="High Nutrients/No predation", 'Low NutrientsNo'="Low Nutrients/No predation", 'High NutrientsYes'="High Nutrients/Predation", 'Low NutrientsYes'="Low Nutrients/Predation"))
+#+
+  # Add a single letter 'A' at coordinates x=3, y=30
+ # annotate("A", x = 3, y = 30, label = "A", size = 8, #fontface = "bold")
+  
+param_plot_topt
+```
+Testing for statistically significant differences
+```{r}
+mod_Topt<-lm(Topt~Cat, data=params_individual)
+summary(mod_Topt)
+pairs(emmeans (mod_Topt,  ~ Cat, adjust = "none"))
+
+mod_Pmax<-lm(Pmax~Cat, data=params_individual)
+summary(mod_Pmax)
+
+pairs(emmeans (mod_Pmax,  ~ Cat, adjust = "none"))
+```
+
+### Calcuating performance above 20%
+```{r}
+
+# High nutrients and no predation
+data$K<-data$T
+d<-data %>%
+  filter(Cat=="High NutrientsNo")
+
+
+
+PmaxHnNp<-params_summary%>%
+  select(Cat, Pmax_mean)%>%
+  filter(Cat=="High NutrientsNo")
+
+Pmax75_HnNp<-0.2*PmaxHnNp$Pmax_mean
+
+# fitting a  model
+start_vals <- get_start_vals(d$K, d$r, "sharpeschoolhigh_1981")
+lower      <- get_lower_lims(d$K, d$r, "sharpeschoolhigh_1981")
+upper      <- get_upper_lims(d$K, d$r, "sharpeschoolhigh_1981")
+
+
+# fitting a schoolfield model
+fit_schoolfield_resp<- nls_multstart(r~sharpeschoolhigh_1981(temp = K, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3, 3, 3, 3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+# Creating predictions
+newT <- data.frame(K = seq(min(d$K-5), max(d$K+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+
+newTHnNp<-newT
+
+newTHnNp_75<-newTHnNp %>%
+  filter(pred>Pmax75_HnNp)
+
+Temp_HnNp_75<-data.frame((min(newTHnNp_75$K)-273), (max(newTHnNp_75$K)-273))
+Temp_HnNp_75
+
+# High nutrients and predation
+d<-data%>%
+  filter(Cat=="High NutrientsYes")
+
+PmaxHnYp<-params_summary%>%
+  select(Cat, Pmax_mean)%>%
+  filter(Cat=="High NutrientsYes")
+
+Pmax75_HnYp<-0.2*PmaxHnYp$Pmax_mean
+
+# fitting a  model
+start_vals <- get_start_vals(d$K, d$r, "sharpeschoolhigh_1981")
+lower      <- get_lower_lims(d$K, d$r, "sharpeschoolhigh_1981")
+upper      <- get_upper_lims(d$K, d$r, "sharpeschoolhigh_1981")
+
+
+# fitting a schoolfield model
+fit_schoolfield_resp<- nls_multstart(r~sharpeschoolhigh_1981(temp = K, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3, 3, 3, 3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+# Creating predictions
+newT <- data.frame(K = seq(min(d$K-5), max(d$K+5), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+
+newTHnYp<-newT
+
+newTHnYp_75<-newTHnYp %>%
+  filter(pred>Pmax75_HnYp)
+
+Temp_HnYp_75<-data.frame((min(newTHnYp_75$K)-273), (max(newTHnYp_75$K)-273))
+Temp_HnYp_75
+
+## Low nutrients and no predation
+d<-data%>%
+  filter(Cat=="Low NutrientsNo")
+
+PmaxLnNp<-params_summary%>%
+  select(Cat, Pmax_mean)%>%
+  filter(Cat=="Low NutrientsNo")
+
+Pmax75LnNp<-0.2*PmaxLnNp$Pmax_mean
+
+# fitting a  model
+start_vals <- get_start_vals(d$K, d$r, "sharpeschoolhigh_1981")
+lower      <- get_lower_lims(d$K, d$r, "sharpeschoolhigh_1981")
+upper      <- get_upper_lims(d$K, d$r, "sharpeschoolhigh_1981")
+
+
+# fitting a schoolfield model
+fit_schoolfield_resp<- nls_multstart(r~sharpeschoolhigh_1981(temp = K, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(3, 3, 3, 3),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+
+# Creating predictions
+newT <- data.frame(K = seq(min(d$K-2), max(d$K+2), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+
+newTLnNp<-newT
+
+newTLnNp_75<-newTLnNp %>%
+  filter(pred>Pmax75LnNp)
+
+Temp_LnNp_75<-data.frame((min(newTLnNp_75$K)-273), (max(newTLnNp_75$K)-273))
+Temp_LnNp_75
+
+#Low nutrients and predation
+d<-data%>%
+  filter(Cat=="Low NutrientsYes")
+
+PmaxLnYp<-params_summary%>%
+  select(Cat, Pmax_mean)%>%
+  filter(Cat=="Low NutrientsYes")
+
+Pmax75_LnYp<-0.2*PmaxLnYp$Pmax_mean
+
+# fitting a  model
+start_vals <- get_start_vals(d$K, d$r, "sharpeschoolhigh_1981")
+lower      <- get_lower_lims(d$K, d$r, "sharpeschoolhigh_1981")
+upper      <- get_upper_lims(d$K, d$r, "sharpeschoolhigh_1981")
+
+
+# fitting a schoolfield model
+fit_schoolfield_resp<- nls_multstart(r~sharpeschoolhigh_1981(temp = K, r_tref, e, eh, th, tref = 293),
+data = d,
+iter = c(5, 5, 5, 5),
+start_lower = start_vals - 10,
+start_upper = start_vals + 10,
+lower = get_lower_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+upper = get_upper_lims(d$K, d$r, model_name = 'sharpeschoolhigh_1981'),
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+
+# Creating predictions
+newT <- data.frame(K = seq(min(d$K-2), max(d$K+2), length.out=100))
+newT$pred <- predict(fit_schoolfield_resp, newdata = newT)
+
+newTLnYp<-newT
+
+newTLnYp_75<-newTLnYp %>%
+  filter(pred>Pmax75_LnYp)
+
+Temp_LnYp_75<-data.frame((min(newTLnYp_75$K)-273), (max(newTLnYp_75$K)-273))
+
+Temp_LnYp_75
+
+## creating the data frame
+minHnNp<-Temp_HnNp_75$X.min.newTHnNp_75.K....273.
+maxHnNp<-Temp_HnNp_75$X.max.newTHnNp_75.K....273.
+
+minHnYp<-Temp_HnYp_75$X.min.newTHnYp_75.K....273.
+maxHnYp<-Temp_HnYp_75$X.max.newTHnYp_75.K....273.
+
+minLnNp<-Temp_LnNp_75$X.min.newTLnNp_75.K....273.
+maxLnNp<-Temp_LnNp_75$X.max.newTLnNp_75.K....273.
+
+minLnYp<-Temp_LnYp_75$X.min.newTLnYp_75.K....273.
+maxLnYp<-Temp_LnYp_75$X.max.newTLnYp_75.K....273.
+
+
+df<-data.frame(
+  Treatment=c("High Nutrients/No Predation", "High Nutrients/Predation", "Low Nutrients/No Predation", "Low Nutrients/Predation"),
+  MinT=c(minHnNp, minHnYp, minLnNp, minLnYp),
+  MaxT=c(maxHnNp, maxHnYp, maxLnNp, maxLnYp)
+)
+
+df<-df%>%
+  mutate(Tbread=MaxT-MinT)
+```
+
+ploting
+```{r}
+df$Panel <- paste("Thermal breadth (","\u00B0C",")")
+
+t_breadth_2<-
+ggplot() +
+  geom_errorbar(
+    data = df,
+    aes(x = fct_rev(Treatment), ymin = MinT, ymax = MaxT, color = Treatment),
+    size = 2, width = 0.4, alpha = 0.3,
+    position = position_dodge(width = 0.85),
+    show.legend = FALSE
+  ) +
+  facet_wrap(~ Panel) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill = "#D3D3D3", colour = "black"),
+    strip.text = element_text(color = "black"),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks = element_blank()
+  ) +
+  ylab("") +
+  scale_y_continuous(limits = c(14, 34), breaks = seq(14, 34, 2)) +
+  scale_colour_manual(values = c(
+    'High Nutrients/No Predation' = "#00A087FF",
+    'High Nutrients/Predation' = "darkgreen",
+    'Low Nutrients/No Predation' = "#F39B7FB2",
+    'Low Nutrients/Predation' = "lightsalmon4"
+  ))
+
+t_breadth_2
+```
+
+#### Figure Thermal parameters
+```{r}
+# Grouping T breadth and pmax and topt
+TPC_Tparam2<-(param_plot_topt|param_plot_pmax|t_breadth_2) +
+  plot_layout(heights = c(1,1, 0.6), width=c(0.8, 0.8, 1.2)) &
+  theme(panel.grid = element_blank())
+
+Fig_1b_1<-(tpc2)/(TPC_Tparam2)+
+   plot_layout(heights = c(1, 0.8), width=c(1,1))
+ 
+Fig_1b_1
+
+ggsave("figure/TPC_Parameters.png", height = 22, width = 20, units = 'cm', dpi= 300, type = "cairo")
+```
+
